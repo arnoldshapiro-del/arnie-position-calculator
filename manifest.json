@@ -1,0 +1,14 @@
+{
+  "name": "Arnie's Position Calculator v2",
+  "short_name": "Position Calc",
+  "description": "Futures position-size and risk calculator for MES, MNQ, M2K, ES, NQ, RTY. Forward/reverse/Fib/EV modes, scale-out simulator, and saved plans for day trading.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0a0e1a",
+  "theme_color": "#d4a574",
+  "orientation": "any",
+  "icons": [
+    { "src": "/favicon.ico", "sizes": "48x48", "type": "image/x-icon" },
+    { "src": "/favicon.ico", "sizes": "192x192", "type": "image/x-icon", "purpose": "any maskable" }
+  ]
+}

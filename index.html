@@ -1,0 +1,658 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Arnie's Position Calculator v2 · NinjaTrader Pre-Trade Instrument</title>
+  <meta name="description" content="Forward · Reverse · Fibonacci · Expected Value modes for MES, MNQ, M2K, ES, NQ, RTY. Matches NinjaTrader ATM + Enhanced Chart Trader display. Built for 2-min scalping with pattern presets, saved plans, and keyboard shortcuts.">
+  <link rel="manifest" href="/manifest.json">
+  <meta name="theme-color" content="#d4a574">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%230e1117'/%3E%3Ctext x='16' y='22' text-anchor='middle' font-size='18' fill='%23d4a574' font-family='monospace' font-weight='700'%3E$%3C/text%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    html, body { margin: 0; padding: 0; background: #0e1117; color: #e6e1d7; }
+    body { font-family: 'JetBrains Mono', 'Menlo', monospace; }
+    #boot { padding: 40px; color: #8a8577; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div id="root"><div id="boot">Loading calculator…</div></div>
+
+  <script type="text/babel" data-presets="react">
+    const { useState, useMemo, useEffect, useCallback } = React;
+
+    const INSTRUMENTS = {
+      MES: { name: 'Micro S&P 500', tickSize: 0.25, tickValue: 1.25, pointValue: 5, ticksPerPoint: 4, decimals: 2, stopBuffer: 1.0 },
+      MNQ: { name: 'Micro Nasdaq-100', tickSize: 0.25, tickValue: 0.50, pointValue: 2, ticksPerPoint: 4, decimals: 2, stopBuffer: 1.5 },
+      M2K: { name: 'Micro Russell 2000', tickSize: 0.10, tickValue: 0.50, pointValue: 5, ticksPerPoint: 10, decimals: 1, stopBuffer: 0.4 },
+      ES:  { name: 'E-mini S&P 500', tickSize: 0.25, tickValue: 12.50, pointValue: 50, ticksPerPoint: 4, decimals: 2, stopBuffer: 1.0 },
+      NQ:  { name: 'E-mini Nasdaq-100', tickSize: 0.25, tickValue: 5.00, pointValue: 20, ticksPerPoint: 4, decimals: 2, stopBuffer: 1.5 },
+      RTY: { name: 'E-mini Russell 2000', tickSize: 0.10, tickValue: 5.00, pointValue: 50, ticksPerPoint: 10, decimals: 1, stopBuffer: 0.4 },
+    };
+
+    const PRESETS = {
+      'double-bottom': {
+        label: 'Double Bottom',
+        desc: 'Long on neckline close — stop below neckline',
+        fn: (inst, entry) => ({
+          entry, stop: +(entry - inst.stopBuffer).toFixed(inst.decimals),
+          tps: [
+            { price: +(entry + 2 * inst.stopBuffer).toFixed(inst.decimals), c: 1 },
+            { price: +(entry + 4 * inst.stopBuffer).toFixed(inst.decimals), c: 1 },
+            { price: +(entry + 6 * inst.stopBuffer).toFixed(inst.decimals), c: 1 },
+            { price: +(entry + 8 * inst.stopBuffer).toFixed(inst.decimals), c: 1 },
+          ],
+        }),
+      },
+      'double-top': {
+        label: 'Double Top',
+        desc: 'Short on neckline close — stop above neckline',
+        fn: (inst, entry) => ({
+          entry, stop: +(entry + inst.stopBuffer).toFixed(inst.decimals),
+          tps: [
+            { price: +(entry - 2 * inst.stopBuffer).toFixed(inst.decimals), c: 1 },
+            { price: +(entry - 4 * inst.stopBuffer).toFixed(inst.decimals), c: 1 },
+            { price: +(entry - 6 * inst.stopBuffer).toFixed(inst.decimals), c: 1 },
+            { price: +(entry - 8 * inst.stopBuffer).toFixed(inst.decimals), c: 1 },
+          ],
+        }),
+      },
+      'bull-flag': {
+        label: 'Bull Flag',
+        desc: 'Long on trendline close — stop below trendline',
+        fn: (inst, entry) => ({
+          entry, stop: +(entry - inst.stopBuffer).toFixed(inst.decimals),
+          tps: [
+            { price: +(entry + 3 * inst.stopBuffer).toFixed(inst.decimals), c: 1 },
+            { price: +(entry + 5 * inst.stopBuffer).toFixed(inst.decimals), c: 1 },
+            { price: +(entry + 7 * inst.stopBuffer).toFixed(inst.decimals), c: 1 },
+            { price: +(entry + 10 * inst.stopBuffer).toFixed(inst.decimals), c: 1 },
+          ],
+        }),
+      },
+      'bear-flag': {
+        label: 'Bear Flag',
+        desc: 'Short on trendline close — stop above trendline',
+        fn: (inst, entry) => ({
+          entry, stop: +(entry + inst.stopBuffer).toFixed(inst.decimals),
+          tps: [
+            { price: +(entry - 3 * inst.stopBuffer).toFixed(inst.decimals), c: 1 },
+            { price: +(entry - 5 * inst.stopBuffer).toFixed(inst.decimals), c: 1 },
+            { price: +(entry - 7 * inst.stopBuffer).toFixed(inst.decimals), c: 1 },
+            { price: +(entry - 10 * inst.stopBuffer).toFixed(inst.decimals), c: 1 },
+          ],
+        }),
+      },
+      'hammer': {
+        label: 'Hammer',
+        desc: 'Long on confirmation close — stop below wick tip',
+        fn: (inst, entry) => ({
+          entry, stop: +(entry - 2 * inst.stopBuffer).toFixed(inst.decimals),
+          tps: [
+            { price: +(entry + 3 * inst.stopBuffer).toFixed(inst.decimals), c: 1 },
+            { price: +(entry + 5 * inst.stopBuffer).toFixed(inst.decimals), c: 1 },
+            { price: +(entry + 7 * inst.stopBuffer).toFixed(inst.decimals), c: 1 },
+            { price: +(entry + 9 * inst.stopBuffer).toFixed(inst.decimals), c: 1 },
+          ],
+        }),
+      },
+      'failed-breakout': {
+        label: 'Failed Breakout',
+        desc: 'Fade the failed move — stop at the failure extreme',
+        fn: (inst, entry) => ({
+          entry, stop: +(entry + 2 * inst.stopBuffer).toFixed(inst.decimals),
+          tps: [
+            { price: +(entry - 3 * inst.stopBuffer).toFixed(inst.decimals), c: 2 },
+            { price: +(entry - 5 * inst.stopBuffer).toFixed(inst.decimals), c: 1 },
+            { price: +(entry - 7 * inst.stopBuffer).toFixed(inst.decimals), c: 1 },
+          ],
+        }),
+      },
+    };
+
+    const MODES = {
+      forward: { label: 'Forward', desc: 'Start with prices, see dollars' },
+      reverse: { label: 'Reverse', desc: 'Start with $ risk, get contracts' },
+      fib:     { label: 'Fibonacci', desc: 'Auto-project 1.618 / 2.0 / 2.618' },
+      ev:      { label: 'Expected Value', desc: 'Win-rate math: is this +EV?' },
+    };
+
+    // localStorage-backed plans API
+    const PLAN_PREFIX = 'arnie_calc_plan:';
+    const storage = {
+      list: () => {
+        const keys = [];
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (k && k.startsWith(PLAN_PREFIX)) keys.push(k);
+        }
+        return keys;
+      },
+      get: (k) => localStorage.getItem(k),
+      set: (k, v) => localStorage.setItem(k, v),
+      delete: (k) => localStorage.removeItem(k),
+    };
+
+    function PositionCalculatorV2() {
+      const [mode, setMode] = useState('forward');
+      const [sym, setSym] = useState('MES');
+      const inst = INSTRUMENTS[sym];
+
+      const [entry, setEntry] = useState(5800);
+      const [stop, setStop] = useState(5798);
+      const [tps, setTps] = useState([
+        { price: 5802, c: 1 },
+        { price: 5804, c: 1 },
+        { price: 5806, c: 1 },
+        { price: 5808, c: 1 },
+      ]);
+
+      const [targetRisk, setTargetRisk] = useState(200);
+      const [stopDistance, setStopDistance] = useState(2);
+      const [direction, setDirection] = useState('long');
+
+      const [patternLow, setPatternLow] = useState(5790);
+      const [patternHigh, setPatternHigh] = useState(5800);
+      const [fibContracts, setFibContracts] = useState(3);
+
+      const [winRate, setWinRate] = useState(55);
+      const [avgWinR, setAvgWinR] = useState(2);
+      const [avgLossR, setAvgLossR] = useState(1);
+      const [tradesPerDay, setTradesPerDay] = useState(3);
+      const [riskPerTrade, setRiskPerTrade] = useState(200);
+
+      const [filled, setFilled] = useState([false, false, false, false]);
+      const [stopped, setStopped] = useState(false);
+      const [stopAtBE, setStopAtBE] = useState(false);
+
+      const [savedPlans, setSavedPlans] = useState([]);
+      const [planName, setPlanName] = useState('');
+      const [savedLoaded, setSavedLoaded] = useState(false);
+
+      useEffect(() => {
+        try {
+          const keys = storage.list();
+          const plans = keys.map(k => {
+            try { const v = storage.get(k); return v ? { key: k, ...JSON.parse(v) } : null; }
+            catch { return null; }
+          }).filter(Boolean);
+          setSavedPlans(plans.sort((a, b) => (b.ts || 0) - (a.ts || 0)));
+        } catch {}
+        setSavedLoaded(true);
+      }, []);
+
+      const totalContracts = tps.reduce((s, t) => s + t.c, 0);
+      const openContracts = stopped ? 0 : tps.reduce((s, t, i) => s + (filled[i] ? 0 : t.c), 0);
+
+      const moneyForOrder = (price, contracts) => {
+        const points = Math.abs(price - entry);
+        return points * inst.pointValue * contracts;
+      };
+
+      const effectiveStop = stopAtBE ? entry : stop;
+      const stopLoss = moneyForOrder(effectiveStop, openContracts);
+
+      const realized = useMemo(() => {
+        let r = 0;
+        tps.forEach((t, i) => { if (filled[i]) r += moneyForOrder(t.price, t.c); });
+        return r;
+      }, [filled, tps, entry, inst]);
+
+      const totalPotentialReward = tps.reduce((s, t) => s + moneyForOrder(t.price, t.c), 0);
+      const fullStopLoss = moneyForOrder(stop, totalContracts);
+      const rrRatio = fullStopLoss > 0 ? (totalPotentialReward / fullStopLoss).toFixed(2) : '—';
+
+      const reverseResult = useMemo(() => {
+        const dollarPerContractAtStop = stopDistance * inst.pointValue;
+        if (dollarPerContractAtStop <= 0) return { contracts: 0, actualRisk: 0, suggestedTps: [] };
+        const contracts = Math.floor(targetRisk / dollarPerContractAtStop);
+        const actualRisk = contracts * dollarPerContractAtStop;
+        const sign = direction === 'long' ? 1 : -1;
+        const suggestedTps = [1, 2, 3, 4].map(mult => ({
+          price: +(entry + sign * stopDistance * mult * 1.5).toFixed(inst.decimals),
+          rr: (mult * 1.5).toFixed(2),
+        }));
+        return { contracts, actualRisk, suggestedTps };
+      }, [targetRisk, stopDistance, direction, entry, inst]);
+
+      const fibResult = useMemo(() => {
+        const height = Math.abs(patternHigh - patternLow);
+        return {
+          height,
+          t1:     +(patternHigh + height * 1.000).toFixed(inst.decimals),
+          t1_ext: +(patternHigh + height * 1.272).toFixed(inst.decimals),
+          t2:     +(patternHigh + height * 1.618).toFixed(inst.decimals),
+          t3:     +(patternHigh + height * 2.000).toFixed(inst.decimals),
+          t4:     +(patternHigh + height * 2.618).toFixed(inst.decimals),
+          $t1:    height * inst.pointValue * fibContracts,
+          $t1ext: height * 1.272 * inst.pointValue * fibContracts,
+          $t2:    height * 1.618 * inst.pointValue * fibContracts,
+          $t3:    height * 2.000 * inst.pointValue * fibContracts,
+          $t4:    height * 2.618 * inst.pointValue * fibContracts,
+        };
+      }, [patternLow, patternHigh, fibContracts, inst]);
+
+      const evResult = useMemo(() => {
+        const wr = winRate / 100;
+        const evPerTradeR = wr * avgWinR - (1 - wr) * avgLossR;
+        const evPerTradeDollar = evPerTradeR * riskPerTrade;
+        const evPerDay = evPerTradeDollar * tradesPerDay;
+        const evPerMonth = evPerDay * 20;
+        const breakEvenWR = (avgLossR / (avgWinR + avgLossR) * 100).toFixed(1);
+        return { evPerTradeR, evPerTradeDollar, evPerDay, evPerMonth, breakEvenWR };
+      }, [winRate, avgWinR, avgLossR, tradesPerDay, riskPerTrade]);
+
+      const pickInstrument = (s) => setSym(s);
+
+      const applyPreset = (key) => {
+        const p = PRESETS[key];
+        if (!p) return;
+        const result = p.fn(inst, entry);
+        setEntry(result.entry);
+        setStop(result.stop);
+        const padded = [...result.tps];
+        while (padded.length < 4) padded.push({ price: result.entry, c: 0 });
+        setTps(padded);
+        reset();
+      };
+
+      const fillTP = (i) => {
+        if (stopped || filled[i]) return;
+        const nf = [...filled]; nf[i] = true; setFilled(nf);
+      };
+
+      const reset = () => {
+        setFilled([false, false, false, false]);
+        setStopped(false);
+        setStopAtBE(false);
+      };
+
+      const updateTp = (i, key, val) => {
+        const nt = [...tps];
+        nt[i] = { ...nt[i], [key]: key === 'price' ? parseFloat(val) || 0 : parseInt(val) || 0 };
+        setTps(nt);
+      };
+
+      const savePlan = () => {
+        if (!planName.trim()) return;
+        const key = `${PLAN_PREFIX}${planName.trim().replace(/[^a-zA-Z0-9-]/g, '_')}_${Date.now()}`;
+        const plan = { name: planName.trim(), sym, entry, stop, tps, mode, ts: Date.now() };
+        try {
+          storage.set(key, JSON.stringify(plan));
+          setSavedPlans(prev => [{ key, ...plan }, ...prev]);
+          setPlanName('');
+        } catch (e) { console.error('Save failed', e); }
+      };
+
+      const loadPlan = (p) => {
+        setSym(p.sym);
+        setEntry(p.entry);
+        setStop(p.stop);
+        setTps(p.tps);
+        setMode(p.mode || 'forward');
+        reset();
+      };
+
+      const deletePlan = (key) => {
+        try {
+          storage.delete(key);
+          setSavedPlans(prev => prev.filter(p => p.key !== key));
+        } catch {}
+      };
+
+      const handleKey = useCallback((e) => {
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
+        if (e.key === '1') fillTP(0);
+        else if (e.key === '2') fillTP(1);
+        else if (e.key === '3') fillTP(2);
+        else if (e.key === '4') fillTP(3);
+        else if (e.key === 'b' || e.key === 'B') setStopAtBE(v => !v);
+        else if (e.key === 's' || e.key === 'S') setStopped(true);
+        else if (e.key === 'r' || e.key === 'R') reset();
+      }, [filled, stopped]);
+
+      useEffect(() => {
+        window.addEventListener('keydown', handleKey);
+        return () => window.removeEventListener('keydown', handleKey);
+      }, [handleKey]);
+
+      const prices = [effectiveStop, entry, ...tps.map(t => t.price)];
+      const minP = Math.min(...prices);
+      const maxP = Math.max(...prices);
+      const range = maxP - minP || 1;
+      const pad = range * 0.1;
+      const chartHi = maxP + pad;
+      const chartLo = minP - pad;
+      const chartRange = chartHi - chartLo;
+      const yFor = (p) => ((chartHi - p) / chartRange) * 100;
+
+      const fmt = (p) => Number(p).toFixed(inst.decimals);
+
+      return (
+        <div style={{ fontFamily: "'JetBrains Mono', 'Menlo', monospace", background: '#0e1117', color: '#e6e1d7', minHeight: '100vh', padding: '20px' }}>
+          <style>{`
+            .serif { font-family: 'Instrument Serif', 'Georgia', serif; font-weight: 400; letter-spacing: -0.01em; }
+            .card { background: #151922; border: 1px solid #262c3a; border-radius: 4px; padding: 16px; }
+            .label { font-size: 10px; letter-spacing: 0.15em; text-transform: uppercase; color: #8a8577; margin-bottom: 6px; }
+            .btn { background: transparent; border: 1px solid #3d4456; color: #e6e1d7; padding: 8px 14px; font-family: inherit; font-size: 11px; cursor: pointer; letter-spacing: 0.08em; text-transform: uppercase; transition: all 0.15s; border-radius: 2px; }
+            .btn:hover { border-color: #d4a574; color: #d4a574; }
+            .btn.active { background: #d4a574; color: #0e1117; border-color: #d4a574; }
+            .btn.disabled { opacity: 0.3; cursor: not-allowed; }
+            .btn.small { padding: 5px 10px; font-size: 10px; }
+            .amber { color: #d4a574; }
+            .green { color: #7eb88f; }
+            .red { color: #c17b7b; }
+            .dim { color: #6c6656; }
+            .violet { color: #a89bc9; }
+            input.num, select.num { background: #0e1117; border: 1px solid #262c3a; color: #e6e1d7; padding: 6px 8px; font-family: inherit; font-size: 13px; width: 100%; border-radius: 2px; box-sizing: border-box; }
+            input.num:focus, select.num:focus { outline: none; border-color: #d4a574; }
+            kbd { background: #1f242f; border: 1px solid #3d4456; color: #d4a574; padding: 1px 6px; font-size: 10px; border-radius: 3px; font-family: inherit; }
+          `}</style>
+
+          <div style={{ maxWidth: '1100px', margin: '0 auto' }}>
+
+            <div style={{ marginBottom: '24px', borderBottom: '1px solid #262c3a', paddingBottom: '16px' }}>
+              <div className="label">Arnie · NinjaTrader position calculator · v2</div>
+              <h1 className="serif" style={{ fontSize: '40px', margin: '4px 0 2px', letterSpacing: '-0.02em' }}>
+                The <em className="amber">complete</em> pre-trade instrument.
+              </h1>
+              <p style={{ color: '#8a8577', fontSize: '12px', margin: 0, lineHeight: 1.6 }}>
+                Forward mode · reverse-risk mode · Fibonacci projections · expected-value math · saved plans · keyboard shortcuts.
+              </p>
+            </div>
+
+            <div style={{ display: 'flex', gap: '6px', marginBottom: '20px', flexWrap: 'wrap' }}>
+              {Object.keys(MODES).map(m => (
+                <button key={m} className={`btn ${mode === m ? 'active' : ''}`} onClick={() => setMode(m)}>
+                  {MODES[m].label} · <span style={{ opacity: 0.7, textTransform: 'none' }}>{MODES[m].desc}</span>
+                </button>
+              ))}
+            </div>
+
+            <div style={{ marginBottom: '20px' }}>
+              <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '8px' }}>
+                {Object.keys(INSTRUMENTS).map(s => (
+                  <button key={s} className={`btn ${sym === s ? 'active' : ''}`} onClick={() => pickInstrument(s)}>{s}</button>
+                ))}
+              </div>
+              <div style={{ fontSize: '11px', color: '#6c6656' }}>
+                <span className="amber">{inst.name}</span> · ${inst.pointValue}/pt · {inst.tickSize} tick = ${inst.tickValue.toFixed(2)} · {inst.ticksPerPoint} ticks/pt · buffer {inst.stopBuffer}pt
+              </div>
+            </div>
+
+            {mode === 'forward' && (
+              <>
+                <div style={{ marginBottom: '20px' }}>
+                  <div className="label">Pattern presets</div>
+                  <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                    {Object.entries(PRESETS).map(([key, p]) => (
+                      <button key={key} className="btn small" onClick={() => applyPreset(key)} title={p.desc}>{p.label}</button>
+                    ))}
+                  </div>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '320px 1fr', gap: '20px', marginBottom: '20px' }}>
+                  <div className="card">
+                    <div className="label" style={{ marginBottom: '12px' }}>Trade setup</div>
+                    <div style={{ marginBottom: '10px' }}>
+                      <div style={{ fontSize: '10px', color: '#8a8577', marginBottom: '3px' }}>ENTRY</div>
+                      <input className="num" type="number" value={entry} step={inst.tickSize} onChange={e => setEntry(parseFloat(e.target.value) || 0)} />
+                    </div>
+                    <div style={{ marginBottom: '10px' }}>
+                      <div style={{ fontSize: '10px', color: '#c17b7b', marginBottom: '3px' }}>STOP LOSS</div>
+                      <input className="num" type="number" value={stop} step={inst.tickSize} onChange={e => setStop(parseFloat(e.target.value) || 0)} />
+                    </div>
+                    <div style={{ borderTop: '1px solid #262c3a', margin: '12px 0', paddingTop: '12px' }}>
+                      <div style={{ fontSize: '10px', color: '#7eb88f', marginBottom: '6px' }}>TAKE-PROFIT LEVELS</div>
+                      {tps.map((t, i) => (
+                        <div key={i} style={{ display: 'grid', gridTemplateColumns: '28px 1fr 44px', gap: '4px', marginBottom: '4px', alignItems: 'center' }}>
+                          <div style={{ fontSize: '10px', color: '#6c6656' }}>TP{i+1}</div>
+                          <input className="num" type="number" value={t.price} step={inst.tickSize} onChange={e => updateTp(i, 'price', e.target.value)} />
+                          <input className="num" type="number" value={t.c} min="0" max="10" onChange={e => updateTp(i, 'c', e.target.value)} />
+                        </div>
+                      ))}
+                      <div style={{ fontSize: '9px', color: '#6c6656', marginTop: '4px' }}>Price · Contracts (0 = disable)</div>
+                    </div>
+                    <div style={{ borderTop: '1px solid #262c3a', margin: '12px 0', paddingTop: '12px' }}>
+                      <div style={{ fontSize: '10px', color: '#8a8577', marginBottom: '4px' }}>POSITION SIZE</div>
+                      <div style={{ fontSize: '22px' }} className="amber">{totalContracts}c</div>
+                    </div>
+                  </div>
+
+                  <div className="card" style={{ position: 'relative', display: 'flex', flexDirection: 'column' }}>
+                    <div className="label" style={{ marginBottom: '10px' }}>What NinjaTrader shows you</div>
+                    <div style={{ position: 'relative', flex: 1, minHeight: '340px', background: '#0e1117', border: '1px solid #1f242f', borderRadius: '2px' }}>
+                      <div style={{ position: 'absolute', top: `${yFor(effectiveStop)}%`, left: 0, right: 0, transform: 'translateY(-50%)' }}>
+                        <div style={{ borderTop: `1px dashed ${stopped ? '#c17b7b' : 'rgba(193, 123, 123, 0.6)'}`, height: 0 }} />
+                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '0 10px', marginTop: '-9px' }}>
+                          <div style={{ background: '#0e1117', padding: '2px 5px', fontSize: '10px' }} className="red">
+                            STOP · {openContracts}c · {fmt(effectiveStop)} {stopAtBE && <span className="dim">(BE)</span>}
+                          </div>
+                          <div style={{ background: '#0e1117', padding: '2px 5px', fontSize: '12px', fontWeight: 600 }} className={openContracts === 0 || stopAtBE ? 'dim' : 'red'}>
+                            {openContracts === 0 ? '—' : stopAtBE ? '$0.00' : '-$' + stopLoss.toFixed(2)}
+                          </div>
+                        </div>
+                      </div>
+                      <div style={{ position: 'absolute', top: `${yFor(entry)}%`, left: 0, right: 0, transform: 'translateY(-50%)' }}>
+                        <div style={{ borderTop: '1px solid #e6e1d7', height: 0 }} />
+                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '0 10px', marginTop: '-9px' }}>
+                          <div style={{ background: '#0e1117', padding: '2px 5px', fontSize: '10px' }}>
+                            ENTRY · {openContracts}c open · {fmt(entry)}
+                          </div>
+                          <div style={{ background: '#0e1117', padding: '2px 5px', fontSize: '10px' }} className="dim">← fill</div>
+                        </div>
+                      </div>
+                      {tps.map((t, i) => {
+                        if (t.c === 0) return null;
+                        const isFilled = filled[i];
+                        const money = moneyForOrder(t.price, t.c);
+                        return (
+                          <div key={i} style={{ position: 'absolute', top: `${yFor(t.price)}%`, left: 0, right: 0, transform: 'translateY(-50%)' }}>
+                            <div style={{ borderTop: `1px ${isFilled ? 'dotted' : 'solid'} rgba(126, 184, 143, ${isFilled ? 0.25 : 0.55})`, height: 0 }} />
+                            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '0 10px', marginTop: '-9px' }}>
+                              <div style={{ background: '#0e1117', padding: '2px 5px', fontSize: '10px', opacity: isFilled ? 0.4 : 1 }} className="green">
+                                TP{i+1} · {t.c}c · {fmt(t.price)} {isFilled && '✓'}
+                              </div>
+                              <div style={{ background: '#0e1117', padding: '2px 5px', fontSize: '12px', fontWeight: 600, opacity: isFilled ? 0.4 : 1 }} className="green">
+                                +${money.toFixed(2)}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '10px', marginBottom: '16px' }}>
+                  <div className="card"><div className="label">Max risk</div><div style={{ fontSize: '20px' }} className="red">-${fullStopLoss.toFixed(2)}</div></div>
+                  <div className="card"><div className="label">Max reward</div><div style={{ fontSize: '20px' }} className="green">+${totalPotentialReward.toFixed(2)}</div></div>
+                  <div className="card"><div className="label">R : R</div><div style={{ fontSize: '20px' }} className="amber">1 : {rrRatio}</div></div>
+                  <div className="card"><div className="label">Stop distance</div><div style={{ fontSize: '20px' }} className="amber">{Math.abs(entry - stop).toFixed(inst.decimals)}pt</div><div style={{ fontSize: '10px', color: '#6c6656' }}>${(Math.abs(entry - stop) * inst.pointValue).toFixed(2)}/contract</div></div>
+                </div>
+
+                <div className="card" style={{ marginBottom: '16px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '10px' }}>
+                    <div>
+                      <div className="label">Scale-out simulator</div>
+                      <div style={{ fontSize: '11px', color: '#6c6656', marginTop: '2px' }}>
+                        Shortcuts: <kbd>1-4</kbd> fill TP · <kbd>B</kbd> breakeven · <kbd>S</kbd> stop · <kbd>R</kbd> reset
+                      </div>
+                    </div>
+                    <button className="btn small" onClick={reset}>Reset</button>
+                  </div>
+                  <div style={{ display: 'flex', gap: '6px', marginBottom: '12px', flexWrap: 'wrap' }}>
+                    {tps.map((t, i) => (
+                      <button key={i} className={`btn small ${filled[i] ? 'active' : ''} ${stopped || filled[i] || t.c === 0 ? 'disabled' : ''}`} onClick={() => fillTP(i)} disabled={stopped || filled[i] || t.c === 0}>
+                        TP{i+1} +${moneyForOrder(t.price, t.c).toFixed(0)}
+                      </button>
+                    ))}
+                    <button className={`btn small ${stopAtBE ? 'active' : ''}`} onClick={() => setStopAtBE(!stopAtBE)}>{stopAtBE ? '✓ BE' : '→ BE'}</button>
+                    <button className={`btn small ${stopped ? 'active' : ''}`} onClick={() => setStopped(true)} disabled={openContracts === 0} style={{ borderColor: '#c17b7b', color: stopped ? '#0e1117' : '#c17b7b', background: stopped ? '#c17b7b' : 'transparent' }}>Stop hits</button>
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '10px' }}>
+                    <div><div style={{ fontSize: '10px', color: '#8a8577', letterSpacing: '0.1em' }}>REALIZED</div><div style={{ fontSize: '18px' }} className={realized > 0 ? 'green' : 'dim'}>{realized === 0 ? '$0' : '+$' + realized.toFixed(2)}</div></div>
+                    <div><div style={{ fontSize: '10px', color: '#8a8577', letterSpacing: '0.1em' }}>OPEN</div><div style={{ fontSize: '18px' }} className="amber">{openContracts}c</div></div>
+                    <div><div style={{ fontSize: '10px', color: '#8a8577', letterSpacing: '0.1em' }}>REM. RISK</div><div style={{ fontSize: '18px' }} className={stopAtBE || openContracts === 0 ? 'dim' : 'red'}>{openContracts === 0 ? '$0' : stopAtBE ? '$0' : '-$' + stopLoss.toFixed(2)}</div></div>
+                    <div><div style={{ fontSize: '10px', color: '#8a8577', letterSpacing: '0.1em' }}>WORST CASE NOW</div><div style={{ fontSize: '18px' }} className={(realized - stopLoss) >= 0 ? 'green' : 'red'}>
+                      {stopped ? (realized - stopLoss >= 0 ? '+$' : '-$') + Math.abs(realized - stopLoss).toFixed(2)
+                       : stopAtBE ? '+$' + realized.toFixed(2)
+                       : (realized - stopLoss >= 0 ? '+$' : '-$') + Math.abs(realized - stopLoss).toFixed(2)}
+                    </div></div>
+                  </div>
+                </div>
+
+                <div className="card" style={{ marginBottom: '16px' }}>
+                  <div className="label">Saved plans</div>
+                  <div style={{ display: 'flex', gap: '6px', marginBottom: '10px', marginTop: '8px' }}>
+                    <input className="num" style={{ maxWidth: '280px' }} type="text" placeholder="Name this setup (e.g. 'MES open drive')" value={planName} onChange={e => setPlanName(e.target.value)} />
+                    <button className="btn small" onClick={savePlan} disabled={!planName.trim()}>Save</button>
+                  </div>
+                  {savedLoaded && savedPlans.length === 0 && (<div style={{ fontSize: '11px', color: '#6c6656' }}>No saved plans yet. Save your common setups to recall them instantly.</div>)}
+                  {savedPlans.map(p => (
+                    <div key={p.key} style={{ display: 'flex', gap: '8px', alignItems: 'center', padding: '6px 0', borderTop: '1px solid #1f242f', fontSize: '11px' }}>
+                      <span className="amber" style={{ flex: 1 }}>{p.name}</span>
+                      <span className="dim">{p.sym} · {fmt(p.entry)} / {fmt(p.stop)}</span>
+                      <button className="btn small" onClick={() => loadPlan(p)}>Load</button>
+                      <button className="btn small" onClick={() => deletePlan(p.key)} style={{ borderColor: '#c17b7b', color: '#c17b7b' }}>×</button>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+
+            {mode === 'reverse' && (
+              <div className="card" style={{ marginBottom: '16px' }}>
+                <div className="serif" style={{ fontSize: '22px', marginBottom: '4px' }}>Reverse mode · <em className="amber">"$X risk, Y-point stop — how many contracts?"</em></div>
+                <div style={{ fontSize: '11px', color: '#8a8577', marginBottom: '20px' }}>Tell it your dollar risk target and the stop distance you're seeing on the chart. It tells you exactly how many contracts to trade.</div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px', marginBottom: '24px' }}>
+                  <div>
+                    <div className="label">Target $ risk</div>
+                    <input className="num" type="number" value={targetRisk} onChange={e => setTargetRisk(parseFloat(e.target.value) || 0)} />
+                    <div style={{ fontSize: '10px', color: '#6c6656', marginTop: '4px' }}>What you're willing to lose if stopped</div>
+                  </div>
+                  <div>
+                    <div className="label">Stop distance (points)</div>
+                    <input className="num" type="number" step="0.1" value={stopDistance} onChange={e => setStopDistance(parseFloat(e.target.value) || 0)} />
+                    <div style={{ fontSize: '10px', color: '#6c6656', marginTop: '4px' }}>Points from entry to your stop</div>
+                  </div>
+                  <div>
+                    <div className="label">Direction</div>
+                    <select className="num" value={direction} onChange={e => setDirection(e.target.value)}><option value="long">Long</option><option value="short">Short</option></select>
+                  </div>
+                </div>
+                <div style={{ padding: '20px', background: '#1a1f2b', borderLeft: '3px solid #d4a574', borderRadius: '2px', marginBottom: '16px' }}>
+                  <div className="label amber">The answer</div>
+                  <div style={{ fontSize: '44px', lineHeight: 1.1, marginTop: '8px' }} className="amber">{reverseResult.contracts} contract{reverseResult.contracts !== 1 ? 's' : ''}</div>
+                  <div style={{ fontSize: '13px', color: '#8a8577', marginTop: '8px' }}>
+                    Actual risk: <span className="red">${reverseResult.actualRisk.toFixed(2)}</span>
+                    {reverseResult.actualRisk < targetRisk && <span className="dim"> (under your ${targetRisk} target by ${(targetRisk - reverseResult.actualRisk).toFixed(2)})</span>}
+                  </div>
+                  <div style={{ fontSize: '11px', color: '#6c6656', marginTop: '12px', lineHeight: 1.6 }}>
+                    Math: ${targetRisk} ÷ (${stopDistance}pt × ${inst.pointValue}/pt) = ${(targetRisk / (stopDistance * inst.pointValue)).toFixed(2)} — rounded down to {reverseResult.contracts} to stay under budget.
+                  </div>
+                </div>
+                <div className="label">Suggested take-profits (at these R:R multiples)</div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '10px', marginTop: '8px' }}>
+                  {reverseResult.suggestedTps.map((tp, i) => (
+                    <div key={i} className="card">
+                      <div style={{ fontSize: '10px', color: '#7eb88f' }}>TP{i+1} · {tp.rr}R</div>
+                      <div style={{ fontSize: '18px' }} className="amber">{fmt(tp.price)}</div>
+                      <div style={{ fontSize: '10px', color: '#6c6656' }}>if 1c exits: +${(Math.abs(tp.price - entry) * inst.pointValue).toFixed(2)}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {mode === 'fib' && (
+              <div className="card" style={{ marginBottom: '16px' }}>
+                <div className="serif" style={{ fontSize: '22px', marginBottom: '4px' }}>Fibonacci projection · <em className="amber">auto-compute 1.0 / 1.272 / 1.618 / 2.0 / 2.618</em></div>
+                <div style={{ fontSize: '11px', color: '#8a8577', marginBottom: '20px' }}>Enter the low and high of your pattern. Get every classic Fibonacci extension target plus the dollar value at each level for your chosen contract count.</div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px', marginBottom: '20px' }}>
+                  <div><div className="label">Pattern low</div><input className="num" type="number" step={inst.tickSize} value={patternLow} onChange={e => setPatternLow(parseFloat(e.target.value) || 0)} /></div>
+                  <div><div className="label">Pattern high / break level</div><input className="num" type="number" step={inst.tickSize} value={patternHigh} onChange={e => setPatternHigh(parseFloat(e.target.value) || 0)} /></div>
+                  <div><div className="label">Contracts at each TP</div><input className="num" type="number" min="1" max="10" value={fibContracts} onChange={e => setFibContracts(parseInt(e.target.value) || 1)} /></div>
+                </div>
+                <div style={{ marginBottom: '12px', fontSize: '11px', color: '#8a8577' }}>Pattern height: <span className="amber">{fibResult.height.toFixed(inst.decimals)} points</span> · ${(fibResult.height * inst.pointValue).toFixed(2)}/contract</div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '10px' }}>
+                  {[
+                    { label: '1.000 · measured',   price: fibResult.t1,     $: fibResult.$t1,    hint: 'classic measured move' },
+                    { label: '1.272 · gentle ext', price: fibResult.t1_ext, $: fibResult.$t1ext, hint: 'common scale-out 1' },
+                    { label: '1.618 · golden ✦',   price: fibResult.t2,     $: fibResult.$t2,    hint: 'primary TP' },
+                    { label: '2.000 · double',     price: fibResult.t3,     $: fibResult.$t3,    hint: 'runner target' },
+                    { label: '2.618 · max ext',    price: fibResult.t4,     $: fibResult.$t4,    hint: 'home run' },
+                  ].map((t, i) => (
+                    <div key={i} className="card">
+                      <div style={{ fontSize: '9px', color: '#a89bc9', letterSpacing: '0.05em' }}>{t.label}</div>
+                      <div style={{ fontSize: '16px', marginTop: '4px' }} className="amber">{fmt(t.price)}</div>
+                      <div style={{ fontSize: '13px' }} className="green">+${t.$.toFixed(2)}</div>
+                      <div style={{ fontSize: '9px', color: '#6c6656', marginTop: '4px' }}>{t.hint}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {mode === 'ev' && (
+              <div className="card" style={{ marginBottom: '16px' }}>
+                <div className="serif" style={{ fontSize: '22px', marginBottom: '4px' }}>Expected value · <em className="amber">does your system actually print money?</em></div>
+                <div style={{ fontSize: '11px', color: '#8a8577', marginBottom: '20px' }}>Given your win rate and R:R, this tells you what you earn per trade on average. Negative = the math doesn't work no matter how good you feel about it.</div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '12px', marginBottom: '24px' }}>
+                  <div><div className="label">Win rate %</div><input className="num" type="number" min="0" max="100" value={winRate} onChange={e => setWinRate(parseFloat(e.target.value) || 0)} /></div>
+                  <div><div className="label">Avg win (R)</div><input className="num" type="number" step="0.1" value={avgWinR} onChange={e => setAvgWinR(parseFloat(e.target.value) || 0)} /></div>
+                  <div><div className="label">Avg loss (R)</div><input className="num" type="number" step="0.1" value={avgLossR} onChange={e => setAvgLossR(parseFloat(e.target.value) || 0)} /></div>
+                  <div><div className="label">Trades / day</div><input className="num" type="number" min="0" value={tradesPerDay} onChange={e => setTradesPerDay(parseFloat(e.target.value) || 0)} /></div>
+                  <div><div className="label">Risk / trade ($)</div><input className="num" type="number" value={riskPerTrade} onChange={e => setRiskPerTrade(parseFloat(e.target.value) || 0)} /></div>
+                </div>
+                <div style={{ padding: '20px', background: '#1a1f2b', borderLeft: `3px solid ${evResult.evPerTradeR > 0 ? '#7eb88f' : '#c17b7b'}`, borderRadius: '2px', marginBottom: '16px' }}>
+                  <div className="label" style={{ color: evResult.evPerTradeR > 0 ? '#7eb88f' : '#c17b7b' }}>Per-trade expectancy</div>
+                  <div style={{ fontSize: '36px', lineHeight: 1.1, marginTop: '4px' }} className={evResult.evPerTradeR > 0 ? 'green' : 'red'}>
+                    {evResult.evPerTradeR > 0 ? '+' : ''}{evResult.evPerTradeR.toFixed(3)}R <span style={{ fontSize: '20px', opacity: 0.7 }}>· ${evResult.evPerTradeDollar.toFixed(2)}</span>
+                  </div>
+                  <div style={{ fontSize: '11px', color: '#8a8577', marginTop: '8px' }}>
+                    Break-even win rate for your R:R: <span className="amber">{evResult.breakEvenWR}%</span>
+                    {winRate > parseFloat(evResult.breakEvenWR)
+                      ? <span className="green"> — you're above it by {(winRate - parseFloat(evResult.breakEvenWR)).toFixed(1)}%</span>
+                      : <span className="red"> — you're below it by {(parseFloat(evResult.breakEvenWR) - winRate).toFixed(1)}%</span>}
+                  </div>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px' }}>
+                  <div className="card"><div className="label">Per trade</div><div style={{ fontSize: '22px' }} className={evResult.evPerTradeDollar >= 0 ? 'green' : 'red'}>{evResult.evPerTradeDollar >= 0 ? '+' : ''}${evResult.evPerTradeDollar.toFixed(2)}</div></div>
+                  <div className="card"><div className="label">Per day ({tradesPerDay} trades)</div><div style={{ fontSize: '22px' }} className={evResult.evPerDay >= 0 ? 'green' : 'red'}>{evResult.evPerDay >= 0 ? '+' : ''}${evResult.evPerDay.toFixed(2)}</div></div>
+                  <div className="card"><div className="label">Per month (20 sessions)</div><div style={{ fontSize: '22px' }} className={evResult.evPerMonth >= 0 ? 'green' : 'red'}>{evResult.evPerMonth >= 0 ? '+' : ''}${evResult.evPerMonth.toFixed(0)}</div></div>
+                </div>
+                <div style={{ fontSize: '11px', color: '#6c6656', marginTop: '16px', lineHeight: 1.6 }}>These are statistical expectations averaged across many trades. Individual days will vary wildly. The number that matters is whether <span className="amber">per-trade expectancy &gt; 0</span> — if yes, time is on your side; if no, you're burning money no matter how good you feel.</div>
+              </div>
+            )}
+
+            <div className="card" style={{ marginBottom: '16px' }}>
+              <div className="label amber">Four rules that fix every dollar-math mistake</div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px', marginTop: '10px' }}>
+                <div><div className="serif" style={{ fontSize: '16px' }}>1 · Each line is its own island.</div><div style={{ fontSize: '11px', color: '#8a8577', marginTop: '2px', lineHeight: 1.5 }}>$ next to TP2 ≠ sum of TP1+TP2. Add them yourself to see total reward.</div></div>
+                <div><div className="serif" style={{ fontSize: '16px' }}>2 · Stop shrinks as TPs fill.</div><div style={{ fontSize: '11px', color: '#8a8577', marginTop: '2px', lineHeight: 1.5 }}>The number on the stop updates as contracts come off. That's correct behavior.</div></div>
+                <div><div className="serif" style={{ fontSize: '16px' }}>3 · Forget ticks. Use points.</div><div style={{ fontSize: '11px', color: '#8a8577', marginTop: '2px', lineHeight: 1.5 }}>$ = contracts × points × $/point. Three multiplications. Done.</div></div>
+                <div><div className="serif" style={{ fontSize: '16px' }}>4 · Move stop to BE after TP1.</div><div style={{ fontSize: '11px', color: '#8a8577', marginTop: '2px', lineHeight: 1.5 }}>Worst case becomes +$0. You're playing with house money from that point.</div></div>
+              </div>
+            </div>
+
+            <div style={{ fontSize: '10px', color: '#4a4639', textAlign: 'center', paddingTop: '16px', borderTop: '1px solid #1f242f' }}>
+              v2 · built for Arnie · CME-accurate · matches NinjaTrader ATM + Enhanced Chart Trader display · plans persisted locally
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<PositionCalculatorV2 />);
+  </script>
+</body>
+</html>
